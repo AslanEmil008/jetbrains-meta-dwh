@@ -41,6 +41,41 @@ Raw events and the proposed warehouse are represented as Iceberg tables in a Tri
 
 `fact_queries.user_id` logically references `dim_users`; access rows reference `fact_queries` and `dim_tables`; team usage is attributed through `user_team_history`. Iceberg does not enforce traditional foreign keys, so transformations and data-quality checks must validate these relationships.
 
+## SQL implementation
+
+The `sql/` directory contains six scripts representing the proposed Trino/Apache Iceberg warehouse implementation.
+
+| File | Description |
+|---|---|
+| [`01_create_tables.sql`](sql/01_create_tables.sql) | Defines eight warehouse tables, including dimensions, query-level facts, historical team memberships, and daily aggregates. |
+| [`02_load_dimensions.sql`](sql/02_load_dimensions.sql) | Populates and updates user, team, and table dimensions, along with historical user-to-team membership intervals. Uses `MERGE` for upserts. |
+| [`03_load_facts.sql`](sql/03_load_facts.sql) | Selects the latest query-event version using `ROW_NUMBER()`, upserts query-level resource metrics, and records query-to-table access relationships. |
+| [`04_daily_aggregates.sql`](sql/04_daily_aggregates.sql) | Performs a full refresh of daily table usage and team resource aggregates. Counts distinct users and avoids multiplying resource metrics for multi-table queries. |
+| [`05_incremental_updates.sql`](sql/05_incremental_updates.sql) | Demonstrates affected-date incremental processing. Identifies changed queries, captures old and new execution dates, updates query facts, and recalculates affected daily aggregates. |
+| [`06_analytical_queries.sql`](sql/06_analytical_queries.sql) | Contains analytical SQL for distinct table users, team resource consumption, historical trends, and data-quality checks. |
+
+### Execution order
+
+For an initial warehouse load, run the scripts in this order:
+
+1. `01_create_tables.sql` — create warehouse tables.
+2. `02_load_dimensions.sql` — populate dimensions and team history.
+3. `03_load_facts.sql` — populate query facts and table-access relationships.
+4. `04_daily_aggregates.sql` — build daily aggregates.
+5. `06_analytical_queries.sql` — run analytical and validation queries.
+
+`05_incremental_updates.sql` illustrates subsequent incremental processing rather than the initial full load. It assumes relevant dimensions and query-table relationships have already been updated.
+
+### Implementation considerations
+
+The SQL targets a Trino catalog named `iceberg`, with source tables under `iceberg.raw` and warehouse tables under `iceberg.meta_dwh`.
+
+The scripts assume that these schemas and source tables already exist. Source ingestion, scheduling, durable watermark management, and deployment configuration are outside the scope of this example.
+
+The full-refresh and incremental examples use separate SQL statements, so their updates are not atomic across all warehouse tables. Production deployment would require orchestration, failure recovery, and a safe publication strategy.
+
+The SQL is a proposed implementation and has not been executed against a live Trino/Iceberg environment.
+
 ## Metrics and attribution
 
 - **Distinct table users:** `COUNT(DISTINCT user_id)` over query/table read accesses, with the query start timestamp within the requested period. The same user is counted once per table for the period.
