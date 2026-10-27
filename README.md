@@ -96,7 +96,79 @@ Run Step 8B first: Step 8C starts from a copy of its database. Both scripts use 
 
 ## Analytical examples
 
-The intended SQL examples cover (a) distinct users reading a fully qualified table in an arbitrary interval, (b) a team's resource usage with historical membership attribution, and (c) daily usage trends. For arbitrary-period distinct users, join detailed query and access facts rather than summing daily distinct-user aggregates.
+## Analytical examples
+
+The following SQL queries demonstrate how the proposed Meta DWH answers the two main business questions. Table names, team IDs, and dates are illustrative.
+
+### 1. How many distinct users queried table X during a given period?
+
+Example: Count distinct users who read `hive.analytics.orders` during October 2026.
+
+```sql
+SELECT
+    COUNT(DISTINCT q.user_id) AS distinct_users
+FROM iceberg.meta_dwh.fact_queries AS q
+JOIN iceberg.meta_dwh.fact_query_table_access AS a
+    ON q.query_id = a.query_id
+JOIN iceberg.meta_dwh.dim_tables AS t
+    ON a.table_id = t.table_id
+WHERE t.catalog_name = 'hive'
+  AND t.schema_name = 'analytics'
+  AND t.table_name = 'orders'
+  AND a.access_type = 'READ'
+  AND q.started_at >= TIMESTAMP '2026-10-01 00:00:00'
+  AND q.started_at < TIMESTAMP '2026-11-01 00:00:00';
+```
+
+**Design note:** `COUNT(DISTINCT q.user_id)` ensures that users who queried the table multiple times are counted only once. Detailed facts are used because daily distinct-user counts cannot safely be summed across dates.
+
+### 2. How many resources did team Y consume during that period?
+
+Example: Calculate resource usage for team `t02` during October 2026.
+
+```sql
+SELECT
+    h.team_id,
+    COUNT(*) AS query_count,
+    SUM(q.cpu_time_ms) / 1000.0 AS total_cpu_seconds,
+    SUM(q.physical_input_bytes) / POWER(1024.0, 3) AS total_input_gib,
+    SUM(q.wall_time_ms) / 1000.0 AS total_wall_seconds,
+    MAX(q.peak_memory_bytes) / POWER(1024.0, 3)
+        AS max_single_query_peak_memory_gib
+FROM iceberg.meta_dwh.fact_queries AS q
+JOIN iceberg.meta_dwh.user_team_history AS h
+    ON q.user_id = h.user_id
+   AND q.started_at >= h.valid_from
+   AND (h.valid_to IS NULL OR q.started_at < h.valid_to)
+WHERE h.team_id = 't02'
+  AND q.started_at >= TIMESTAMP '2026-10-01 00:00:00'
+  AND q.started_at < TIMESTAMP '2026-11-01 00:00:00'
+GROUP BY h.team_id;
+```
+
+**Design note:** Team membership is resolved at query execution time using historical membership intervals. Resource metrics are aggregated directly from query facts to avoid double-counting queries that access multiple tables. Wall time represents summed query durations, and peak memory represents the maximum individual-query peak, not concurrent team memory.
+
+### 3. How does usage change over time?
+
+Historical daily trends are available in `agg_daily_table_usage` and `agg_daily_team_usage`.
+
+For example:
+
+```sql
+SELECT
+    usage_date,
+    query_count,
+    total_cpu_ms / 1000.0 AS cpu_seconds
+FROM iceberg.meta_dwh.agg_daily_team_usage
+WHERE team_id = 't02'
+  AND usage_date >= DATE '2026-10-01'
+  AND usage_date < DATE '2026-11-01'
+ORDER BY usage_date;
+```
+
+The full analytical SQL examples and validation queries are available in [`sql/06_analytical_queries.sql`](sql/06_analytical_queries.sql).
+
+**Note:** These queries illustrate the proposed design. They have not been executed against JetBrains production data.
 
 ## Limitations and further metadata
 
