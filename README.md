@@ -96,8 +96,6 @@ Run Step 8B first: Step 8C starts from a copy of its database. Both scripts use 
 
 ## Analytical examples
 
-## Analytical examples
-
 The following SQL queries demonstrate how the proposed Meta DWH answers the two main business questions. Table names, team IDs, and dates are illustrative.
 
 ### 1. How many distinct users queried table X during a given period?
